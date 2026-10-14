@@ -73,6 +73,7 @@ def ll(g):
 
 def rnd(c):
     """GeoJSON coordinates of any depth to 7 decimals (~1 cm), x and y only"""
+    if not c: return []                                                       # an empty part of a multi-geometry, kept as published
     return [round(c[0], 7), round(c[1], 7)] if isinstance(c[0], (int, float)) else [rnd(x) for x in c]
 
 def citygml(url):
