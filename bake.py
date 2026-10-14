@@ -22,7 +22,7 @@ Writes, in data/out/:
     files) and traffic-aids.pmtiles (one tile layer per geodatabase layer, lower-case names, z16-18: street detail only)
   - index.json: counts per layer, sizes, source
 Usage: python3 bake.py"""
-import datetime, hashlib, json, os, shutil, subprocess, urllib.request, zipfile
+import datetime, hashlib, json, os, shutil, subprocess, time, urllib.request, zipfile
 import duckdb, fiona, fiona.transform
 from pyproj import Transformer
 import sources
@@ -115,7 +115,7 @@ def aids(c, tmp):
     layers = fiona.listlayers(gdb); missing = AIDS_LAYERS - set(layers)
     assert not missing, f'Traffic Aids Drawings: layers gone from the geodatabase: {sorted(missing)}'
     out_dir = os.path.join(sources.OUT, 'traffic-aids'); os.makedirs(out_dir, exist_ok=True)
-    counts, empty, tiles_in = {}, {}, []
+    counts, empty, tiles_in, t0 = {}, {}, [], time.time()
     for L in sorted(layers) + AIDS_GML:
         name = L.lower(); src = os.path.join(tmp, f'aids_{name}.geojsonl'); n = e = 0
         with open(src, 'w') as out:
@@ -131,6 +131,7 @@ def aids(c, tmp):
                 e += has_geom and not f['geometry']
                 out.write(json.dumps(f, ensure_ascii=False, default=str) + '\n'); n += 1
             if L not in AIDS_GML: s.close()
+        print(f'aids: {name} {n} features, {os.path.getsize(src) / 1e6:.0f} MB GeoJSON, {time.time() - t0:.0f} s', flush=True)
         counts[f'aids_{name}'] = n
         if e: empty[name] = e
         if has_geom: tiles_in += ['-L', json.dumps({'file': src, 'layer': name})]
@@ -141,9 +142,12 @@ def aids(c, tmp):
                       maximum_object_size = 268435456)) TO '{pq}.part' (FORMAT parquet, COMPRESSION zstd, ROW_GROUP_SIZE 16384)""")
         os.replace(pq + '.part', pq)
     tiles = os.path.join(sources.OUT, 'traffic-aids.pmtiles')
-    # z16-18 only (street detail); the densest tiles at z16-17 are thinned to fit, z18 keeps every feature (extended past 18 if needed)
-    subprocess.run(['tippecanoe', '-o', tiles + '.part.pmtiles', '-Z16', '-z18', '--drop-densest-as-needed', '--extend-zooms-if-still-dropping',
-                    '--force', '--no-progress-indicator', *tiles_in], check=True)
+    # z16-18 (street detail); the densest tiles are thinned to fit; where z18 still has to drop, up to 2 more zooms (z20) keep every
+    # feature (an unlimited extension ran past the 90-minute job limit, 2026-10-14)
+    print(f'aids: tippecanoe from {time.time() - t0:.0f} s', flush=True)
+    subprocess.run(['tippecanoe', '-o', tiles + '.part.pmtiles', '-Z16', '-z18', '-P', '--drop-densest-as-needed', '--extend-zooms-if-still-dropping',
+                    '--extend-zooms-if-still-dropping-maximum=2', '--force', '--no-progress-indicator', *tiles_in], check=True)
+    print(f'aids: tippecanoe done at {time.time() - t0:.0f} s, {os.path.getsize(tiles + ".part.pmtiles") / 1e6:.0f} MB', flush=True)
     os.replace(tiles + '.part.pmtiles', tiles)
     shutil.rmtree(tmp, ignore_errors=True); os.makedirs(tmp)                      # ~GBs of GeoJSON: free the runner's disk
     return counts, revised, sha, empty

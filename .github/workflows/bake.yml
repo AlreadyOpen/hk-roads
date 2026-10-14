@@ -18,7 +18,7 @@ concurrency:
 jobs:
   bake:
     runs-on: ubuntu-24.04
-    timeout-minutes: 90
+    timeout-minutes: 180   # the Traffic Aids Drawings tiles take most of it
     env:
       PIPELINE_DATA: ${{ github.workspace }}/data
       TIPPECANOE: '2.79.0'
