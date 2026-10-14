@@ -1,8 +1,10 @@
 # hk-roads
 
-Hong Kong's road network (Transport Department, Road Network 2nd Generation): every layer of the file geodatabase, plus the Lands
+Hong Kong's road network (Transport Department, Road Network 2nd Generation) and its Traffic Aids Drawings (2nd Generation: signs,
+signals, road markings, yellow boxes, crossings, railings; 51 layers, ~580 MB of tables): every layer of both file geodatabases, plus the Lands
 Department's Road Centreline (CSDI, 1:1000; in HK1980 as served and in WGS84, in its own files under CSDI terms), baked weekly
-by GitHub Actions into GeoParquet (one file per layer) and PMTiles, published to Hugging Face
+by GitHub Actions into GeoParquet (one file per layer; the traffic aids in the `traffic-aids/` folder) and PMTiles (`roads.pmtiles`
+z8-16, `traffic-aids.pmtiles` z16-18, `landsd-centreline.pmtiles` z12-16), published to Hugging Face
 ([dataset](https://huggingface.co/datasets/alreadyopen/hk-roads), [bucket](https://huggingface.co/buckets/alreadyopen/hk-roads)) and
 mirrored to [Kaggle](https://www.kaggle.com/datasets/helenkwok/hk-roads). Made from
 [pipeline-template](https://github.com/AlreadyOpen/pipeline-template): see it for the publish gate, checks and lessons.

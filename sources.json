@@ -1,4 +1,5 @@
 [
  {"name": "Road Network (2nd Generation), file geodatabase RdNet_IRNP.gdb.zip (data.gov.hk hk-td-tis_15-road-network-v2)", "owner": "Transport Department", "url": "https://static.data.gov.hk/td/road-network-v2/RdNet_IRNP.gdb.zip", "licence": "https://data.gov.hk/en/terms-and-conditions", "used_by": "bake.py"},
+ {"name": "Traffic Aids Drawings (2nd Generation), file geodatabase dTAD_IRNP.gdb.zip (data.gov.hk hk-td-tis_16-traffic-aids-drawings-v2)", "owner": "Transport Department", "url": "https://static.data.gov.hk/td/traffic-aids-drawings-v2/dTAD_IRNP.gdb.zip", "licence": "https://data.gov.hk/en/terms-and-conditions", "used_by": "bake.py"},
  {"name": "Road Centreline (CSDI, landsd_rcd_1637310758814_80061)", "owner": "Lands Department", "url": "https://portal.csdi.gov.hk/server/rest/services/common/landsd_rcd_1637310758814_80061/FeatureServer/0", "licence": "https://portal.csdi.gov.hk/csdi-webpage/doc/TNC", "used_by": "bake.py"}
 ]

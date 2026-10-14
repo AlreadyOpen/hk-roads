@@ -11,8 +11,10 @@ import manifest, sources
 REPO = 'alreadyopen/hk-roads'
 LAYERS = ['bus_only_lane', 'centerline', 'gisp_on_street_parking', 'intersection', 'nsr', 'onstreetpark', 'pedestrian_zone', 'permit', 'prohibition', 'roundabout', 'run_in_out', 'speed_limit', 'traffic_features', 'tun_bridge_toll', 'tun_bridge_tv_toll', 'turn', 'vehicle_restriction']
 LANDSD = ['landsd_road_centreline', 'landsd_road_centreline_hk1980']   # Lands Department, CSDI terms: their own files
-DATASET_FILES = [f'{l}.parquet' for l in LAYERS + LANDSD] + ['index.json']
-BUCKET_FILES = ['roads.pmtiles', 'landsd-centreline.pmtiles', 'index.json']
+_aids = os.path.join(sources.OUT, 'traffic-aids')   # Traffic Aids Drawings: one file per geodatabase layer, in a folder (Kaggle: 50 top-level files)
+AIDS = sorted(f'traffic-aids/{f}' for f in os.listdir(_aids) if f.endswith('.parquet')) if os.path.isdir(_aids) else []
+DATASET_FILES = [f'{l}.parquet' for l in LAYERS + LANDSD] + AIDS + ['index.json']
+BUCKET_FILES = ['roads.pmtiles', 'landsd-centreline.pmtiles', 'traffic-aids.pmtiles', 'index.json']
 KAGGLE = ('helenkwok/hk-roads', 'AlreadyOpen HK road network')            # mirrored by kaggle_mirror.py (title 6-50 chars)
 
 def main():
@@ -21,7 +23,10 @@ def main():
     manifest.gate(m, f'https://huggingface.co/buckets/{REPO}/resolve/manifest.json')
     json.dump(m, open(o('manifest.json'), 'w'), indent=1)
     api = HfApi(); api.create_repo(REPO, repo_type='dataset', exist_ok=True)
-    for f in DATASET_FILES + ['manifest.json']:
+    assert AIDS, 'no traffic-aids/*.parquet: run bake.py first'
+    api.upload_folder(folder_path=o('traffic-aids'), path_in_repo='traffic-aids', repo_id=REPO, repo_type='dataset', allow_patterns=['*.parquet'],
+                      commit_message=f"traffic-aids: bake of {idx['built']}")
+    for f in [f for f in DATASET_FILES if f not in AIDS] + ['manifest.json']:
         api.upload_file(path_or_fileobj=o(f), path_in_repo=f, repo_id=REPO, repo_type='dataset', commit_message=f"{f}: bake of {idx['built']}")
     api.upload_file(path_or_fileobj=os.path.join(os.path.dirname(os.path.abspath(__file__)), 'hf', 'README.md'), path_in_repo='README.md', repo_id=REPO, repo_type='dataset', commit_message='card')
     create_bucket(REPO, private=False, exist_ok=True)

@@ -15,14 +15,27 @@ Writes, in data/out/:
     EPSG:2326, the service's coordinates untouched, for aligning with iB1000/iRG1000 and other LandsD 1:1000 data),
     landsd_road_centreline.parquet (WGS84) and landsd-centreline.pmtiles (z12-16). The REST service returns coordinates on a
     1/16 m grid; the full-precision file downloads on CSDI refuse scripted requests (403, 2026-10-14)
+  - TD's Traffic Aids Drawings (2nd generation; data.gov.hk hk-td-tis_16-traffic-aids-drawings-v2): the whole file geodatabase
+    dTAD_IRNP.gdb.zip (~218 MB zipped, ~580 MB of tables): traffic signs (poles, plates, abbreviations), traffic lights, road
+    markings (lines, symbols, annotation text), yellow boxes, crossings, railings, tactile paving, direction and pedestrian signs,
+    every layer and every field. traffic-aids/<layer>.parquet (GeoParquet, EPSG:4326; a folder, as Kaggle allows only 50 top-level
+    files) and traffic-aids.pmtiles (one tile layer per geodatabase layer, lower-case names, z16-18: street detail only)
   - index.json: counts per layer, sizes, source
 Usage: python3 bake.py"""
 import datetime, hashlib, json, os, shutil, subprocess, urllib.request, zipfile
-import duckdb, fiona
+import duckdb, fiona, fiona.transform
 from pyproj import Transformer
 import sources
 
 URL = 'https://static.data.gov.hk/td/road-network-v2/RdNet_IRNP.gdb.zip'
+AIDS = 'https://static.data.gov.hk/td/traffic-aids-drawings-v2/dTAD_IRNP.gdb.zip'
+AIDS_REVISED = 'https://static.data.gov.hk/td/traffic-aids-drawings-v2/DATA_LAST_UPDATED_DATE.csv'
+# the 51 layers the data spec lists (dataspec/file_list.csv, 2026-10-14); a new layer is baked too, a missing one stops the bake
+AIDS_LAYERS = {'DTAD_' + n for n in 'CYC_PT MISC_PT RD_AL_LINE DROP_KERB_LINE RUN_IN_OUT_LINE PED_REFUGE_LINE LV21_LINE TY_BAR_LINE TW_STRIP_LINE \
+TS_POLE_PT TS_POLE_LINE TS_ABV_PT TS_ABV_ANNO_PT TS_ABV_LINE TS_PLATE_LINE TG_PATH_LINE YL_BOX_LINE YL_BOX_POLY CROSSING_LINE RD_MARK_LINE \
+RD_MARK_LINE_C RD_MARK_ANNO_PT RD_MARK_SYM_PT RD_MARK_SYM_LINE RAILING_LINE GIPOLE_PT TS_MISC_LINE TS_FILLED LV22_LINE LV22_FILLED \
+TRAFFIC_LIGHT_PT TRAFFIC_LIGHT_LINE TRAFFIC_LIGHT_FILLED LV23_LINE RST_ZONE_LINE LV24_LINE PS_POLE_PT PS_POLE_LINE PS_ANNO_PT PS_PLATE_LINE \
+PS_MISC_LINE PS_FILLED LV30_LINE DS_POLE_PT DS_POLE_LINE DS_POLE_LINE_C DS_PLATE_LINE DS_MISC_LINE DS_FILLED LV38_LINE'.split()} | {'UNKNOWN_LINE'}
 LANDSD = 'https://portal.csdi.gov.hk/server/rest/services/common/landsd_rcd_1637310758814_80061/FeatureServer/0/query'
 TO_LL = Transformer.from_crs(2326, 4326, always_xy=True)
 # tile layers: the zoom each starts at (dense layers later); table layers have no geometry and go to Parquet only
@@ -30,18 +43,21 @@ LAYERS = {'CENTERLINE': 8, 'SPEED_LIMIT': 12, 'BUS_ONLY_LANE': 12, 'PEDESTRIAN_Z
           'INTERSECTION': 14, 'TRAFFIC_FEATURES': 14, 'RUN_IN_OUT': 14, 'PERMIT': 14, 'PROHIBITION': 14, 'VEHICLE_RESTRICTION': 14,
           'ONSTREETPARK': 15, 'GISP_ON_STREET_PARKING': 15}
 
-def fetch():
-    """the geodatabase, unzipped into the cache; a new download replaces it only when its bytes changed"""
+def fetch(url=URL):
+    """a zipped geodatabase, unzipped into the cache; a new download replaces it only when its bytes changed"""
     os.makedirs(sources.CACHE, exist_ok=True)
-    z = os.path.join(sources.CACHE, 'RdNet_IRNP.gdb.zip')
+    name = os.path.basename(url); z = os.path.join(sources.CACHE, name)
     for attempt in range(4):
-        try: body = urllib.request.urlopen(URL, timeout=300).read(); break
+        try: urllib.request.urlretrieve(url, z + '.part'); break
         except Exception:
             if attempt == 3: raise
-    sha = hashlib.sha256(body).hexdigest()[:16]; gdb = os.path.join(sources.CACHE, sha, 'RdNet_IRNP.gdb')
+    h = hashlib.sha256()
+    with open(z + '.part', 'rb') as f:
+        for b in iter(lambda: f.read(1 << 20), b''): h.update(b)
+    sha = h.hexdigest()[:16]; gdb = os.path.join(sources.CACHE, sha, name[:-4])
     if not os.path.isdir(gdb):
-        open(z, 'wb').write(body)
-        with zipfile.ZipFile(z) as f: f.extractall(os.path.dirname(gdb))
+        with zipfile.ZipFile(z + '.part') as f: f.extractall(os.path.dirname(gdb))
+    os.remove(z + '.part')
     return gdb, sha
 
 def ll(g):
@@ -51,6 +67,50 @@ def ll(g):
     f = {'Point': pt, 'MultiPoint': lambda cs: [pt(p) for p in cs], 'LineString': lambda cs: [pt(p) for p in cs],
          'MultiLineString': lambda ls: [[pt(p) for p in l] for l in ls]}[t]
     return {'type': t, 'coordinates': f(c)}
+
+def rnd(c):
+    """GeoJSON coordinates of any depth to 7 decimals (~1 cm), x and y only"""
+    return [round(c[0], 7), round(c[1], 7)] if isinstance(c[0], (int, float)) else [rnd(x) for x in c]
+
+def aids(c, tmp):
+    """Traffic Aids Drawings: every layer to traffic-aids/<layer>.parquet and to traffic-aids.pmtiles. GDAL turns arcs into lines and
+    reprojects (fiona.transform, all geometry types). A feature without geometry stays in the Parquet file (null geometry); tippecanoe
+    skips it. Returns (counts, revised, sha, no-geometry counts)."""
+    gdb, sha = fetch(AIDS)
+    revised = urllib.request.urlopen(AIDS_REVISED, timeout=60).read().decode('utf-8-sig').strip().splitlines()[-1].strip()
+    layers = fiona.listlayers(gdb); missing = AIDS_LAYERS - set(layers)
+    assert not missing, f'Traffic Aids Drawings: layers gone from the geodatabase: {sorted(missing)}'
+    out_dir = os.path.join(sources.OUT, 'traffic-aids'); os.makedirs(out_dir, exist_ok=True)
+    counts, empty, tiles_in = {}, {}, []
+    for L in sorted(layers):
+        name = L.lower(); src = os.path.join(tmp, f'aids_{name}.geojsonl'); n = e = 0
+        with fiona.open(gdb, layer=L) as s, open(src, 'w') as out:
+            has_geom = s.schema['geometry'] not in (None, 'None')
+            for f in s:
+                g = None
+                if has_geom and f.geometry:
+                    g = dict(fiona.transform.transform_geom(s.crs, 'EPSG:4326', f.geometry))
+                    g = {'type': g['type'], 'coordinates': rnd(g['coordinates'])} if g.get('coordinates') else None
+                e += has_geom and not g
+                p = {k: v for k, v in dict(f.properties).items() if v is not None}
+                out.write(json.dumps({'type': 'Feature', 'properties': p, 'geometry': g}, ensure_ascii=False, default=str) + '\n'); n += 1
+            keys = list(s.schema['properties'])
+        counts[f'aids_{name}'] = n
+        if e: empty[name] = e
+        if has_geom: tiles_in += ['-L', json.dumps({'file': src, 'layer': name})]
+        pq = os.path.join(out_dir, f'{name}.parquet')
+        geom = ", ST_GeomFromGeoJSON(geometry::VARCHAR) AS geometry" if has_geom else ''
+        cols = ', '.join(f"properties->>'{k}' AS \"{k}\"" for k in keys)
+        c.execute(f"""COPY (SELECT {cols}{geom} FROM read_json('{src}', format = 'newline_delimited', columns = {{properties: 'JSON', geometry: 'JSON'}},
+                      maximum_object_size = 268435456)) TO '{pq}.part' (FORMAT parquet, COMPRESSION zstd, ROW_GROUP_SIZE 16384)""")
+        os.replace(pq + '.part', pq)
+    tiles = os.path.join(sources.OUT, 'traffic-aids.pmtiles')
+    # z16-18 only (street detail); the densest tiles at z16-17 are thinned to fit, z18 keeps every feature (extended past 18 if needed)
+    subprocess.run(['tippecanoe', '-o', tiles + '.part.pmtiles', '-Z16', '-z18', '--drop-densest-as-needed', '--extend-zooms-if-still-dropping',
+                    '--force', '--no-progress-indicator', *tiles_in], check=True)
+    os.replace(tiles + '.part.pmtiles', tiles)
+    shutil.rmtree(tmp, ignore_errors=True); os.makedirs(tmp)                      # ~GBs of GeoJSON: free the runner's disk
+    return counts, revised, sha, empty
 
 def landsd(c, tmp):
     """LandsD Road Centreline from CSDI, 3,000 per page, in HK1980; two GeoParquet files and the tile input. Returns its count."""
@@ -125,14 +185,20 @@ def main():
                     '--force', '--quiet', *tiles_in], check=True)
     os.replace(tiles + '.part.pmtiles', tiles)
     counts['landsd_road_centreline'] = landsd(c, tmp)
+    a_counts, a_revised, a_sha, a_empty = aids(c, tmp); counts |= a_counts
     idx = {'built': datetime.datetime.now().isoformat(timespec='seconds'), 'counts': counts,
            'pmtiles': {'file': 'roads.pmtiles', 'layers': {L.lower(): {'minzoom': z} for L, z in LAYERS.items()}, 'minzoom': 8, 'maxzoom': 16,
                        'MB': round(os.path.getsize(tiles) / 1e6, 1)},
-           'parquet': {f'{k}.parquet': round(os.path.getsize(os.path.join(sources.OUT, f'{k}.parquet')) / 1e6, 2) for k in [*counts, 'landsd_road_centreline_hk1980']},
+           'parquet': {f'{k}.parquet': round(os.path.getsize(os.path.join(sources.OUT, f'{k}.parquet')) / 1e6, 2) for k in [*counts, 'landsd_road_centreline_hk1980'] if not k.startswith('aids_')},
            'landsd': {'pmtiles': {'file': 'landsd-centreline.pmtiles', 'layers': {'landsd_centreline': {'minzoom': 12}}, 'minzoom': 12, 'maxzoom': 16,
                                   'MB': round(os.path.getsize(os.path.join(sources.OUT, 'landsd-centreline.pmtiles')) / 1e6, 1)},
                       'crs': {'landsd_road_centreline_hk1980.parquet': 'EPSG:2326 (HK1980 Grid), coordinates as served', 'landsd_road_centreline.parquet': 'EPSG:4326'},
                       'source': f'Lands Department, Road Centreline (CSDI landsd_rcd_1637310758814_80061) {LANDSD}', 'licence': 'https://portal.csdi.gov.hk/csdi-webpage/doc/TNC'},
+           'aids': {'pmtiles': {'file': 'traffic-aids.pmtiles', 'minzoom': 16, 'maxzoom': 18, 'layers': sorted(k[5:] for k in a_counts),
+                                'MB': round(os.path.getsize(os.path.join(sources.OUT, 'traffic-aids.pmtiles')) / 1e6, 1)},
+                    'parquet': {f'traffic-aids/{k[5:]}.parquet': round(os.path.getsize(os.path.join(sources.OUT, 'traffic-aids', f'{k[5:]}.parquet')) / 1e6, 2) for k in a_counts},
+                    'no_geometry': a_empty, 'revised': a_revised,
+                    'source': f'Transport Department, Traffic Aids Drawings (2nd Generation) {AIDS}, snapshot {a_sha}, data revision cut-off {a_revised}'},
            'source': f'Transport Department, Road Network (2nd Generation) {URL}, snapshot {sha}, tippecanoe 2.79.0'}
     json.dump(idx, open(os.path.join(sources.OUT, 'index.json'), 'w'), indent=1)
     print(json.dumps(idx))
