@@ -10,8 +10,9 @@ import manifest, sources
 
 REPO = 'alreadyopen/hk-roads'
 LAYERS = ['bus_only_lane', 'centerline', 'gisp_on_street_parking', 'intersection', 'nsr', 'onstreetpark', 'pedestrian_zone', 'permit', 'prohibition', 'roundabout', 'run_in_out', 'speed_limit', 'traffic_features', 'tun_bridge_toll', 'tun_bridge_tv_toll', 'turn', 'vehicle_restriction']
-DATASET_FILES = [f'{l}.parquet' for l in LAYERS] + ['index.json']
-BUCKET_FILES = ['roads.pmtiles', 'index.json']
+LANDSD = ['landsd_road_centreline', 'landsd_road_centreline_hk1980']   # Lands Department, CSDI terms: their own files
+DATASET_FILES = [f'{l}.parquet' for l in LAYERS + LANDSD] + ['index.json']
+BUCKET_FILES = ['roads.pmtiles', 'landsd-centreline.pmtiles', 'index.json']
 KAGGLE = ('helenkwok/hk-roads', 'AlreadyOpen HK road network')            # mirrored by kaggle_mirror.py (title 6-50 chars)
 
 def main():
