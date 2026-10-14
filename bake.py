@@ -30,12 +30,12 @@ import sources
 URL = 'https://static.data.gov.hk/td/road-network-v2/RdNet_IRNP.gdb.zip'
 AIDS = 'https://static.data.gov.hk/td/traffic-aids-drawings-v2/dTAD_IRNP.gdb.zip'
 AIDS_REVISED = 'https://static.data.gov.hk/td/traffic-aids-drawings-v2/DATA_LAST_UPDATED_DATE.csv'
-# the geodatabase's 57 layers (its catalog, 2026-10-14; annotation as *_ANNO and its attribute points *_ANNO_AP, where the data spec
-# says *_ANNO_PT); a new layer is baked too, a missing one stops the bake
+# the geodatabase's 49 layers (GDB_SystemCatalog, 2026-10-14; the annotation is in *_ANNO classes, where the data spec names
+# *_ANNO_PT copies); a new layer is baked too, a missing one stops the bake
 AIDS_LAYERS = {'DTAD_' + n for n in 'RD_AL_LINE DROP_KERB_LINE RUN_IN_OUT_LINE PED_REFUGE_LINE LV21_LINE CYC_PT MISC_PT GIPOLE_PT TY_BAR_LINE \
 TW_STRIP_LINE TS_POLE_PT TS_POLE_LINE TS_FILLED TS_ABV_PT TS_ABV_LINE TS_MISC_LINE TS_PLATE_LINE TG_PATH_LINE RAILING_LINE YL_BOX_LINE YL_BOX_POLY \
-CROSSING_LINE RD_MARK_LINE RD_MARK_LINE_C RD_MARK_SYM_LINE RD_MARK_SYM_PT LV22_LINE LV22_FILLED TS_ABV_ANNO_AP RD_MARK_ANNO_AP TRAFFIC_LIGHT_PT \
-TRAFFIC_LIGHT_LINE TRAFFIC_LIGHT_FILLED LV23_LINE RST_ZONE_LINE PS_MISC_LINE PS_PLATE_LINE LV30_LINE PS_POLE_LINE PS_POLE_PT PS_ANNO_AP \
+CROSSING_LINE RD_MARK_LINE RD_MARK_LINE_C RD_MARK_SYM_LINE RD_MARK_SYM_PT LV22_LINE LV22_FILLED TRAFFIC_LIGHT_PT \
+TRAFFIC_LIGHT_LINE TRAFFIC_LIGHT_FILLED LV23_LINE RST_ZONE_LINE PS_MISC_LINE PS_PLATE_LINE LV30_LINE PS_POLE_LINE PS_POLE_PT \
 DS_POLE_LINE_C DS_MISC_LINE DS_PLATE_LINE LV38_LINE DS_POLE_LINE DS_POLE_PT DS_FILLED RD_MARK_ANNO TS_ABV_ANNO PS_ANNO'.split()} | {'UNKNOWN_LINE'}
 # two layers of the data spec are not in the geodatabase, only in TD's CityGML (and KML) copies: read from the GML
 AIDS_GML = ['DTAD_LV24_LINE', 'DTAD_PS_FILLED']
