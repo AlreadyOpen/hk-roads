@@ -30,12 +30,15 @@ import sources
 URL = 'https://static.data.gov.hk/td/road-network-v2/RdNet_IRNP.gdb.zip'
 AIDS = 'https://static.data.gov.hk/td/traffic-aids-drawings-v2/dTAD_IRNP.gdb.zip'
 AIDS_REVISED = 'https://static.data.gov.hk/td/traffic-aids-drawings-v2/DATA_LAST_UPDATED_DATE.csv'
-# the 51 layers the data spec lists (dataspec/file_list.csv, 2026-10-14); a new layer is baked too, a missing one stops the bake
-AIDS_LAYERS = {'DTAD_' + n for n in 'CYC_PT MISC_PT RD_AL_LINE DROP_KERB_LINE RUN_IN_OUT_LINE PED_REFUGE_LINE LV21_LINE TY_BAR_LINE TW_STRIP_LINE \
-TS_POLE_PT TS_POLE_LINE TS_ABV_PT TS_ABV_ANNO_PT TS_ABV_LINE TS_PLATE_LINE TG_PATH_LINE YL_BOX_LINE YL_BOX_POLY CROSSING_LINE RD_MARK_LINE \
-RD_MARK_LINE_C RD_MARK_ANNO_PT RD_MARK_SYM_PT RD_MARK_SYM_LINE RAILING_LINE GIPOLE_PT TS_MISC_LINE TS_FILLED LV22_LINE LV22_FILLED \
-TRAFFIC_LIGHT_PT TRAFFIC_LIGHT_LINE TRAFFIC_LIGHT_FILLED LV23_LINE RST_ZONE_LINE LV24_LINE PS_POLE_PT PS_POLE_LINE PS_ANNO_PT PS_PLATE_LINE \
-PS_MISC_LINE PS_FILLED LV30_LINE DS_POLE_PT DS_POLE_LINE DS_POLE_LINE_C DS_PLATE_LINE DS_MISC_LINE DS_FILLED LV38_LINE'.split()} | {'UNKNOWN_LINE'}
+# the geodatabase's 57 layers (its catalog, 2026-10-14; annotation as *_ANNO and its attribute points *_ANNO_AP, where the data spec
+# says *_ANNO_PT); a new layer is baked too, a missing one stops the bake
+AIDS_LAYERS = {'DTAD_' + n for n in 'RD_AL_LINE DROP_KERB_LINE RUN_IN_OUT_LINE PED_REFUGE_LINE LV21_LINE CYC_PT MISC_PT GIPOLE_PT TY_BAR_LINE \
+TW_STRIP_LINE TS_POLE_PT TS_POLE_LINE TS_FILLED TS_ABV_PT TS_ABV_LINE TS_MISC_LINE TS_PLATE_LINE TG_PATH_LINE RAILING_LINE YL_BOX_LINE YL_BOX_POLY \
+CROSSING_LINE RD_MARK_LINE RD_MARK_LINE_C RD_MARK_SYM_LINE RD_MARK_SYM_PT LV22_LINE LV22_FILLED TS_ABV_ANNO_AP RD_MARK_ANNO_AP TRAFFIC_LIGHT_PT \
+TRAFFIC_LIGHT_LINE TRAFFIC_LIGHT_FILLED LV23_LINE RST_ZONE_LINE PS_MISC_LINE PS_PLATE_LINE LV30_LINE PS_POLE_LINE PS_POLE_PT PS_ANNO_AP \
+DS_POLE_LINE_C DS_MISC_LINE DS_PLATE_LINE LV38_LINE DS_POLE_LINE DS_POLE_PT DS_FILLED RD_MARK_ANNO TS_ABV_ANNO PS_ANNO'.split()} | {'UNKNOWN_LINE'}
+# two layers of the data spec are not in the geodatabase, only in TD's CityGML (and KML) copies: read from the GML
+AIDS_GML = ['DTAD_LV24_LINE', 'DTAD_PS_FILLED']
 LANDSD = 'https://portal.csdi.gov.hk/server/rest/services/common/landsd_rcd_1637310758814_80061/FeatureServer/0/query'
 TO_LL = Transformer.from_crs(2326, 4326, always_xy=True)
 # tile layers: the zoom each starts at (dense layers later); table layers have no geometry and go to Parquet only
@@ -72,6 +75,36 @@ def rnd(c):
     """GeoJSON coordinates of any depth to 7 decimals (~1 cm), x and y only"""
     return [round(c[0], 7), round(c[1], 7)] if isinstance(c[0], (int, float)) else [rnd(x) for x in c]
 
+def citygml(url):
+    """TD's CityGML copy of one layer (gen:GenericCityObject, gen:*Attribute, lod4Geometry in HK1980): (keys, features in lon/lat).
+    GDAL reads none of its features with TD's own .gfs, so it is parsed here."""
+    import xml.etree.ElementTree as ET
+    gml = '{http://www.opengis.net/gml}'; gen = '{http://www.opengis.net/citygml/generics/2.0}'
+    for attempt in range(4):
+        try: root = ET.fromstring(urllib.request.urlopen(url, timeout=300).read()); break
+        except Exception:
+            if attempt == 3: raise
+    pts = lambda e: [[round(v, 7) for v in TO_LL.transform(*xy)] for xy in zip(*[iter(map(float, e.findtext(f'{gml}posList').split()))] * 2)]
+    poly = lambda e: [pts(r) for r in e.iter(f'{gml}LinearRing')]
+    keys, feats = [], []
+    for o in root.iter(f'{gen}GenericCityObject'):
+        p = {}
+        for a in o:
+            if a.tag.endswith('Attribute'):
+                keys += [a.get('name')] * (a.get('name') not in keys)
+                if (v := a.findtext(f'{gen}value')) not in (None, ''): p[a.get('name')] = v
+        g, geo = None, next(iter(o.find(f'{gen}lod4Geometry') or []), None)
+        if geo is not None:
+            t = geo.tag[len(gml):]
+            if t == 'LineString': g = {'type': 'LineString', 'coordinates': pts(geo)}
+            elif t == 'MultiCurve': g = {'type': 'MultiLineString', 'coordinates': [pts(l) for l in geo.iter(f'{gml}LineString')]}
+            elif t == 'Polygon': g = {'type': 'Polygon', 'coordinates': poly(geo)}
+            elif t == 'MultiSurface': g = {'type': 'MultiPolygon', 'coordinates': [poly(q) for q in geo.iter(f'{gml}Polygon')]}
+            else: raise ValueError(f'{url}: geometry {t} not handled')
+        feats.append({'type': 'Feature', 'properties': p, 'geometry': g})
+    assert feats, f'{url}: no features'
+    return keys, feats
+
 def aids(c, tmp):
     """Traffic Aids Drawings: every layer to traffic-aids/<layer>.parquet and to traffic-aids.pmtiles. GDAL turns arcs into lines and
     reprojects (fiona.transform, all geometry types). A feature without geometry stays in the Parquet file (null geometry); tippecanoe
@@ -82,19 +115,21 @@ def aids(c, tmp):
     assert not missing, f'Traffic Aids Drawings: layers gone from the geodatabase: {sorted(missing)}'
     out_dir = os.path.join(sources.OUT, 'traffic-aids'); os.makedirs(out_dir, exist_ok=True)
     counts, empty, tiles_in = {}, {}, []
-    for L in sorted(layers):
+    for L in sorted(layers) + AIDS_GML:
         name = L.lower(); src = os.path.join(tmp, f'aids_{name}.geojsonl'); n = e = 0
-        with fiona.open(gdb, layer=L) as s, open(src, 'w') as out:
-            has_geom = s.schema['geometry'] not in (None, 'None')
-            for f in s:
-                g = None
-                if has_geom and f.geometry:
-                    g = dict(fiona.transform.transform_geom(s.crs, 'EPSG:4326', f.geometry))
-                    g = {'type': g['type'], 'coordinates': rnd(g['coordinates'])} if g.get('coordinates') else None
-                e += has_geom and not g
-                p = {k: v for k, v in dict(f.properties).items() if v is not None}
-                out.write(json.dumps({'type': 'Feature', 'properties': p, 'geometry': g}, ensure_ascii=False, default=str) + '\n'); n += 1
-            keys = list(s.schema['properties'])
+        with open(src, 'w') as out:
+            if L in AIDS_GML:
+                keys, feats = citygml(AIDS.rsplit('/', 1)[0] + f'/{L}.gml'); has_geom = True
+            else:
+                s = fiona.open(gdb, layer=L); keys = list(s.schema['properties']); has_geom = s.schema['geometry'] not in (None, 'None')
+                feats = ({'type': 'Feature', 'properties': {k: v for k, v in dict(f.properties).items() if v is not None},
+                          'geometry': dict(fiona.transform.transform_geom(s.crs, 'EPSG:4326', f.geometry)) if has_geom and f.geometry else None} for f in s)
+            for f in feats:
+                g = f['geometry']
+                f['geometry'] = {'type': g['type'], 'coordinates': rnd(g['coordinates'])} if g and g.get('coordinates') else None
+                e += has_geom and not f['geometry']
+                out.write(json.dumps(f, ensure_ascii=False, default=str) + '\n'); n += 1
+            if L not in AIDS_GML: s.close()
         counts[f'aids_{name}'] = n
         if e: empty[name] = e
         if has_geom: tiles_in += ['-L', json.dumps({'file': src, 'layer': name})]
@@ -197,7 +232,7 @@ def main():
            'aids': {'pmtiles': {'file': 'traffic-aids.pmtiles', 'minzoom': 16, 'maxzoom': 18, 'layers': sorted(k[5:] for k in a_counts),
                                 'MB': round(os.path.getsize(os.path.join(sources.OUT, 'traffic-aids.pmtiles')) / 1e6, 1)},
                     'parquet': {f'traffic-aids/{k[5:]}.parquet': round(os.path.getsize(os.path.join(sources.OUT, 'traffic-aids', f'{k[5:]}.parquet')) / 1e6, 2) for k in a_counts},
-                    'no_geometry': a_empty, 'revised': a_revised,
+                    'no_geometry': a_empty, 'revised': a_revised, 'from_citygml': [l.lower() for l in AIDS_GML],
                     'source': f'Transport Department, Traffic Aids Drawings (2nd Generation) {AIDS}, snapshot {a_sha}, data revision cut-off {a_revised}'},
            'source': f'Transport Department, Road Network (2nd Generation) {URL}, snapshot {sha}, tippecanoe 2.79.0'}
     json.dump(idx, open(os.path.join(sources.OUT, 'index.json'), 'w'), indent=1)

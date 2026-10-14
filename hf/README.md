@@ -49,16 +49,18 @@ Traffic Aids Drawings layers (TD's drawing of every traffic aid; most carry `ELE
 | `crossing_line`, `ped_refuge_line` | crossings (`LINETYPE`), pedestrian refuges with design and measured size |
 | `yl_box_poly`, `yl_box_line` | yellow boxes (`YELLOWBOX_TYPE`, angles) and their hatching |
 | `rd_mark_line`, `rd_mark_line_c` | road markings (`COLOR`, `LINETYPE`) and their symbolised representation (pattern, width, offset) |
-| `rd_mark_anno_pt` | road marking text (`TextString`) |
+| `rd_mark_anno`, `rd_mark_anno_ap` | road marking text: the annotation class (`TextString`) and its attribute points |
 | `rd_mark_sym_pt`, `rd_mark_sym_line` | road marking symbols (`REFNAME`, angle, size) |
 | `railing_line`, `rd_al_line`, `drop_kerb_line`, `run_in_out_line` | railings, special road alignment, dropped kerbs, run-ins/outs |
 | `tw_strip_line`, `tg_path_line`, `ty_bar_line` | tactile warning strips, tactile guide paths, transverse yellow bars |
-| `ts_pole_pt`, `ts_pole_line`, `ts_plate_line`, `ts_abv_pt`, `ts_abv_line`, `ts_abv_anno_pt`, `ts_misc_line`, `ts_filled` | traffic signs: poles, plates (drawn), abbreviations and their text |
-| `ds_*`, `ps_*` | direction signs and pedestrian (and tourist) signs: poles, plates, text, fills |
+| `ts_pole_pt`, `ts_pole_line`, `ts_plate_line`, `ts_abv_pt`, `ts_abv_line`, `ts_abv_anno`, `ts_abv_anno_ap`, `ts_misc_line`, `ts_filled` | traffic signs: poles, plates (drawn), abbreviations and their text |
+| `ds_*`, `ps_*` | direction signs and pedestrian (and tourist) signs: poles, plates, text (`ps_anno`, `ps_anno_ap`), fills |
 | `gipole_pt`, `cyc_pt`, `misc_pt` | GI poles, cycling signs, other signs |
 | `rst_zone_line`, `lv21_line` ... `lv38_line`, `lv22_filled` | restriction zones (`TIME_ZONE`) and the drawing levels 21-38 |
 | `unknown_line` | lines TD has not classified |
 
+Layer names are the geodatabase's (TD's data spec calls the annotation layers `*_ANNO_PT`). `dtad_lv24_line` and `dtad_ps_filled`
+are not in the geodatabase: they come from TD's CityGML copies of the same dataset (`DTAD_LV24_LINE.gml`, `DTAD_PS_FILLED.gml`).
 Every feature is kept, including the few without geometry (geometry null; `index.json` counts them under `aids.no_geometry`).
 The data revision cut-off date (TD's `DATA_LAST_UPDATED_DATE.csv`) is in `index.json` (`aids.revised`).
 
